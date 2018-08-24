@@ -58,24 +58,16 @@ class SkipGramDataSet(DataSet):
   def gen_batch_inputs(self, batch_size, window_size):
     features = np.ndarray(shape=(batch_size,), dtype=np.int32)
     labels = np.ndarray(shape=(batch_size,), dtype=np.int32)
-
-    data = self.data
-    for i in range(window_size):
-      data.append(self.data[i])
-
     i = 0
     while True:
       if self.data_index == len(self.data):
         self.data_index = 0
       left = max(0, self.data_index - window_size)
-      right = min(len(self.data), self.data_index + window_size) + 1
+      right = min(len(self.data), self.data_index + window_size + 1)
       for k in range(left, right):
-        if k >= len(self.data):
-          self.data_index = window_size
-          continue
         if k != self.data_index:
-          features[i] = self.word2id[data[self.data_index]]
-          labels[i] = self.word2id[data[k]]
+          features[i] = self.word2id[self.data[self.data_index]]
+          labels[i] = self.word2id[self.data[k]]
           i += 1
           if i == batch_size:
             return features, labels

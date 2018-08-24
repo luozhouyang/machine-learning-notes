@@ -22,23 +22,23 @@ _CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 LICENSE_FILE = os.path.join(os.path.curdir, "LICENSE")
 INIT_FILE = os.path.join(_CURRENT_DIR, "__init__.py")
+TEST_FILE = os.path.join(_CURRENT_DIR, "test.txt")
 
 
 class TestDataSet(unittest.TestCase):
 
   def testGenBatchInputs(self):
-    ds = SkipGramDataSet(file=INIT_FILE)
+    ds = SkipGramDataSet(file=TEST_FILE)
 
-    features, labels = ds.gen_batch_inputs(8, 1)
+    BATCH_SIZE = 16
+    features, labels = ds.gen_batch_inputs(BATCH_SIZE, 1)
 
-    for i in range(8):
+    for i in range(BATCH_SIZE):
       print("%s --> %s" % (ds.id2word[features[i]], ds.id2word[labels[i]]))
-      # print("%d --> %s" % (features[i], ds.id2word[features[i]]))
-      # print("%d --> %s" % (labels[i], ds.id2word[labels[i]]))
 
-    for n in range(31):
-      features, labels = ds.gen_batch_inputs(8, 1)
-      for i in range(8):
+    for i in range(16):
+      features, labels = ds.gen_batch_inputs(BATCH_SIZE, 1)
+      for i in range(BATCH_SIZE):
         print("%s --> %s" % (ds.id2word[features[i]], ds.id2word[labels[i]]))
 
 
