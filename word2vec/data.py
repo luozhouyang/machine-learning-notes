@@ -49,60 +49,34 @@ class DataSet(object):
       self.word2id[word] = len(self.word2id)
       self.id2word[len(self.id2word)] = word
 
-  def gen_batch_inputs(self, batch_size, num_skips, skip_window):
+  def gen_batch_inputs(self, batch_size, skip_window):
     raise NotImplementedError()
 
 
 class SkipGramDataSet(DataSet):
 
-  def gen_batch_inputs(self, batch_size, num_skips, skip_window):
-    """generate a batch of features and labels.
-
-    self.data_index is the first word index in self.data of a span,
-    the target word is the central word of a span,
-    context words are pre and post words of the central word.
-    A span looks like:
-    [context_word_0, context_word_1, target, context_word_2, context_word_3]
-          |                             |
-          self.data_index            target word
-    """
-
-    assert batch_size % num_skips == 0
-    # We randomly choose words from a range [0, 2*skip_windows+1], and we can not choose the one in (2*skip_window+1)/2
-    assert num_skips <= 2 * skip_window
-
+  def gen_batch_inputs(self, batch_size, window_size):
     features = np.ndarray(shape=(batch_size,), dtype=np.int32)
     labels = np.ndarray(shape=(batch_size,), dtype=np.int32)
 
-    span = 2 * skip_window + 1  # [skip_windows target skip_window]
-    buffer = collections.deque(maxlen=span)
+    data = self.data
+    for i in range(window_size):
+      data.append(self.data[i])
 
-    if self.data_index + span > len(self.data):
-      self.data_index = 0
-
-    # fetch a list of words of span length
-    buffer.extend(self.word2id[w] for w in self.data[self.data_index:self.data_index + span])
-    self.data_index += span
-
-    for i in range(batch_size // num_skips):
-      context_words_ids = [w for w in range(span) if w != skip_window]
-      # This will create num_skip words, so we need do `batch_size // num_skip` to
-      # ensure return features and labels in batch_size
-      use_words = random.sample(context_words_ids, num_skips)
-
-      for j, context_word_id in enumerate(use_words):
-        # position offset from 0.
-        features[i * num_skips + j] = buffer[skip_window]
-        labels[i * num_skips + j] = buffer[context_word_id]
-
-      # When come to the last word fo data, fetch words of size span from the beginning of data.
-      # Then move index to the beginning offset span.
+    i = 0
+    while True:
       if self.data_index == len(self.data):
-        buffer.extend(self.data[0:span])
-        self.data_index = span
-      else:
-        buffer.append(self.data[self.data_index])
-        self.data_index += 1
-
-    self.data_index = (self.data_index + len(self.data) - span) % len(self.data)
-    return features, labels
+        self.data_index = 0
+      left = max(0, self.data_index - window_size)
+      right = min(len(self.data), self.data_index + window_size) + 1
+      for k in range(left, right):
+        if k >= len(self.data):
+          self.data_index = window_size
+          continue
+        if k != self.data_index:
+          features[i] = self.word2id[data[self.data_index]]
+          labels[i] = self.word2id[data[k]]
+          i += 1
+          if i == batch_size:
+            return features, labels
+      self.data_index += 1

@@ -20,24 +20,26 @@ import os
 
 _CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
+LICENSE_FILE = os.path.join(os.path.curdir, "LICENSE")
+INIT_FILE = os.path.join(_CURRENT_DIR, "__init__.py")
+
 
 class TestDataSet(unittest.TestCase):
 
   def testGenBatchInputs(self):
-    ds = SkipGramDataSet(file=os.path.join(_CURRENT_DIR, "__init__.py"))
-    print(ds.word2id)
-    print(ds.id2word)
-    print(ds.data)
+    ds = SkipGramDataSet(file=INIT_FILE)
 
-    print(ds.vocab_size)
-
-    print('luozhouyang' in ds.word2id)
-    print(ds.word2id['luozhouyang'])
-
-    features, labels = ds.gen_batch_inputs(8, 2, 1)
+    features, labels = ds.gen_batch_inputs(8, 1)
 
     for i in range(8):
-      print("%s --> %s" % (ds.id2word[features[i]], ds.id2word[labels[1]]))
+      print("%s --> %s" % (ds.id2word[features[i]], ds.id2word[labels[i]]))
+      # print("%d --> %s" % (features[i], ds.id2word[features[i]]))
+      # print("%d --> %s" % (labels[i], ds.id2word[labels[i]]))
+
+    for n in range(31):
+      features, labels = ds.gen_batch_inputs(8, 1)
+      for i in range(8):
+        print("%s --> %s" % (ds.id2word[features[i]], ds.id2word[labels[i]]))
 
 
 if __name__ == "__main__":
