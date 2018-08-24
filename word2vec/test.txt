@@ -1,1 +1,5 @@
 I am a coder.
+
+The rules of English grammar require that in most cases a noun, or more generally a noun phrase, must be "completed" with a determiner to clarify what the referent of the noun phrase is.[1] The most common determiners are the articles the and a(n), which specify the presence or absence of definiteness of the noun. Other possible determiners include words like this, my, each and many – see English determiners. There are also cases where no determiner is required, as in the sentence John likes fast cars.
+
+The definite article the is used when the referent of the noun phrase is assumed to be unique or known from the context. For example, In the sentence The boy with glasses was looking at the moon, it is assumed that in the context the reference can only be to one boy and one moon. However, the definite article is not used:
