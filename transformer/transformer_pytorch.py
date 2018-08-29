@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
+import torch.functional as F
 
 
 class ScaledDotProductAttention(nn.Module):
@@ -124,7 +125,7 @@ class PositionalEncoding(nn.Module):
 class MultiHeadAttention(nn.Module):
   """Multi-Head attention as described in paper <Attention Is All You Need>."""
 
-  def __init__(self, model_dim=512, num_heads=8, dropout=0.1):
+  def __init__(self, model_dim=512, num_heads=8, dropout=0.0):
     """Init.
 
     Args:
@@ -142,6 +143,8 @@ class MultiHeadAttention(nn.Module):
 
     self.dot_product_attention = ScaledDotProductAttention(dropout, scale=True)
     self.linear_final = nn.Linear(model_dim, model_dim)
+    self.dropout = nn.Dropout(dropout)
+    self.layer_norm = nn.LayerNorm(model_dim)
 
   def forward(self, key, value, query, mask=None):
     """Forward pass.
@@ -150,8 +153,11 @@ class MultiHeadAttention(nn.Module):
       key: Key tensor, with shape of [B, L_k, D]
       value: Value tensor, with shape of [B, L_v, D]
       query: Query tensor, with shape of [B, L_q, D]
-      mask: Binary mask indicating which keys have non-zero attention, with shape of [B, L_q, L_k]
+      mask: Binary mask indicating which keys have non-zero attention,
+        with shape of [B, L_q, L_k]
     """
+    residual = query
+
     dim_per_head = self.dim_per_head
     num_heads = self.num_heads
     batch_size = key.size(0)
@@ -176,6 +182,48 @@ class MultiHeadAttention(nn.Module):
     context = context.view(batch_size, -1, dim_per_head * num_heads)
 
     # final linear projection
-    context = self.linear_final(context)
+    output = self.linear_final(context)
 
-    return context, attention
+    # dropout
+    output = self.dropout(output)
+
+    # add residual and norm layer
+    output = self.layer_norm(residual + output)
+
+    return output, attention
+
+
+class PositionalWiseFeedForward(nn.Module):
+  """Positional-wise feed forward network."""
+
+  def __init__(self, model_dim=512, ffn_dim=2048, dropout=0.0):
+    """Init.
+
+    Args:
+      model_dim: Model's dimension, default is 512 according to the paper.
+      ffn_dim: Hidden size of the feed forward network,
+        default is 2048 according to the paper.
+      dropout: Dropout rate.
+    """
+    super(PositionalWiseFeedForward, self).__init__()
+    self.w1 = nn.Conv1d(model_dim, ffn_dim, 1)
+    self.w2 = nn.Conv1d(model_dim, ffn_dim, 1)
+    self.dropout = nn.Dropout(dropout)
+    self.layer_norm = nn.LayerNorm(model_dim)
+
+  def forward(self, x):
+    """Forward pass.
+
+    Args:
+      x: Input tensor, with shape of [B, L, D]
+
+    Returns:
+      A tensor with shape of [B, L, D], without residual value and normalization
+    """
+    output = x.transpose(1, 2)
+    output = self.w2(F.relu(self.w1(output)))
+    output = self.dropout(output.transpose(1, 2))
+
+    # add residual and norm layer
+    output = self.layer_norm(x + output)
+    return output
