@@ -119,3 +119,63 @@ class PositionalEncoding(nn.Module):
     input_pos = tensor(
       [list(range(1, len + 1)) + [0] * (max_len - len) for len in input_len])
     return self.position_encoding(input_pos)
+
+
+class MultiHeadAttention(nn.Module):
+  """Multi-Head attention as described in paper <Attention Is All You Need>."""
+
+  def __init__(self, model_dim=512, num_heads=8, dropout=0.1):
+    """Init.
+
+    Args:
+      model_dim: Model's dimension, default is 512 according to the paper
+      num_heads: Number of heads, default is 8 according to the paper
+      dropout: Dropout rate for dropout layer
+    """
+    super(MultiHeadAttention, self).__init__()
+
+    self.dim_per_head = model_dim // num_heads
+    self.num_heads = num_heads
+    self.linear_k = nn.Linear(model_dim, self.dim_per_head * num_heads)
+    self.linear_v = nn.Linear(model_dim, self.dim_per_head * num_heads)
+    self.linear_q = nn.Linear(model_dim, self.dim_per_head * num_heads)
+
+    self.dot_product_attention = ScaledDotProductAttention(dropout, scale=True)
+    self.linear_final = nn.Linear(model_dim, model_dim)
+
+  def forward(self, key, value, query, mask=None):
+    """Forward pass.
+
+    Args:
+      key: Key tensor, with shape of [B, L_k, D]
+      value: Value tensor, with shape of [B, L_v, D]
+      query: Query tensor, with shape of [B, L_q, D]
+      mask: Binary mask indicating which keys have non-zero attention, with shape of [B, L_q, L_k]
+    """
+    dim_per_head = self.dim_per_head
+    num_heads = self.num_heads
+    batch_size = key.size(0)
+
+    # linear projection
+    key = self.linear_k(key)
+    value = self.linear_v(value)
+    query = self.linear_q(query)
+
+    # split by heads
+    key = key.view(batch_size * num_heads, -1, dim_per_head)
+    value = value.view(batch_size * num_heads, -1, dim_per_head)
+    query = query.view(batch_size * num_heads, -1, dim_per_head)
+
+    if mask:
+      # TODO(luozhouyang): check the shape of mask
+      mask = mask.repeat(num_heads, 1, 1)
+    # scaled dot product attention
+    context, attention = self.dot_product_attention(query, key, value, mask)
+
+    # concat heads
+    context = context.view(batch_size, -1, dim_per_head * num_heads)
+
+    # final linear projection
+    context = self.linear_final(context)
+
+    return context, attention
