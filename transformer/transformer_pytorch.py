@@ -227,3 +227,62 @@ class PositionalWiseFeedForward(nn.Module):
     # add residual and norm layer
     output = self.layer_norm(x + output)
     return output
+
+
+# TODO(luozhouyang) Process embeddings in encoder and decoder
+class EncoderLayer(nn.Module):
+  """A encoder block, with tow sub layers."""
+
+  def __init__(self, model_dim=512, num_heads=8, ffn_dim=2018, dropout=0.0):
+    super(EncoderLayer, self).__init__()
+
+    self.attention = MultiHeadAttention(model_dim, num_heads, dropout)
+    self.feed_forward = PositionalWiseFeedForward(model_dim, ffn_dim, dropout)
+
+  def forward(self, inputs, mask=None):
+    """Forward pass.
+
+    Args:
+      inputs: embedded inputs
+      mask: mask
+
+    Returns:
+      Output and attention tensors of encoder layer.
+    """
+    context, attention = self.attention(inputs, inputs, inputs, mask)
+    output = self.feed_forward(context)
+    return output, attention
+
+
+class Encoder(nn.Module):
+
+  def __init__(self,
+               num_layers=6,
+               model_dim=512,
+               num_heads=8,
+               ffn_dim=2048,
+               dropout=0.0):
+    super(Encoder, self).__init__()
+
+    self.num_layers = num_layers
+    self.encoder_layers = [EncoderLayer(model_dim, num_heads, ffn_dim, dropout)
+                           for _ in range(num_layers)]
+
+  def forward(self, inputs, mask=None):
+    """Forward pass.
+
+    Args:
+      inputs: embedded inputs
+      mask: mask
+
+    Returns:
+      An output of encoder block.
+      An attention list contains each attention tensor of each encoder layer.
+    """
+    output = inputs
+    attentions = []
+    for i in range(self.num_layers):
+      output, attention = self.encoder_layers[i](output, mask)
+      if attention:
+        attentions.append(attention)
+    return output, attentions
