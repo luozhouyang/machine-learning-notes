@@ -41,7 +41,8 @@ class ScaledDotProductAttention(nn.Module):
       d_k = k.size(-1)  # get model's dimension or num_units
       attention = attention / np.sqrt(d_k)
     if padding_mask:
-      # Mask out attention, set a big negative number to where were padded a `PAD`
+      # Mask out attention
+      # set a big negative number to where were padded a `PAD`
       attention = attention.masked_fill_(padding_mask, -np.inf)
     attention = self.softmax(attention)
     attention = self.dropout(attention)
@@ -148,15 +149,14 @@ class MultiHeadAttention(nn.Module):
     self.dropout = nn.Dropout(dropout)
     self.layer_norm = nn.LayerNorm(model_dim)
 
-  def forward(self, key, value, query, padding_mask=None, seq_mask=None):
+  def forward(self, key, value, query, attn_mask=None):
     """Forward pass.
 
     Args:
       key: Key tensor, with shape of [B, L_k, D]
       value: Value tensor, with shape of [B, L_v, D]
       query: Query tensor, with shape of [B, L_q, D]
-      padding_mask: Binary mask indicating which position is padding values, with shape of [B, L_q, L_k]
-      seq_mask: Binary mask indicating which keys has non-zero attention, with shape of [B, L, L]
+      attn_mask: Mask tensor for attention, with shape of [B, L, L]
     """
     residual = query
 
@@ -174,13 +174,11 @@ class MultiHeadAttention(nn.Module):
     value = value.view(batch_size * num_heads, -1, dim_per_head)
     query = query.view(batch_size * num_heads, -1, dim_per_head)
 
-    # TODO(luozhouyang) decide where to do seq_mask
-
-    if padding_mask:
-      # TODO(luozhouyang): check the shape of mask
-      padding_mask = padding_mask.repeat(num_heads, 1, 1)
+    if attn_mask:
+      attn_mask = attn_mask.repeat(num_heads, 1, 1)
     # scaled dot product attention
-    context, attention = self.dot_product_attention(query, key, value, padding_mask)
+    context, attention = self.dot_product_attention(
+      query, key, value, attn_mask)
 
     # concat heads
     context = context.view(batch_size, -1, dim_per_head * num_heads)
@@ -242,18 +240,23 @@ class EncoderLayer(nn.Module):
     self.attention = MultiHeadAttention(model_dim, num_heads, dropout)
     self.feed_forward = PositionalWiseFeedForward(model_dim, ffn_dim, dropout)
 
-  def forward(self, inputs, mask=None):
+  def forward(self, inputs, attn_mask=None):
     """Forward pass.
 
     Args:
-      inputs: embedded inputs
-      mask: mask
+      inputs: Embedded inputs tensor, with shape [B, L, D]
+      attn_mask: Binary mask tensor for attention, with shape [B, L, L]
 
     Returns:
       Output and attention tensors of encoder layer.
     """
-    context, attention = self.attention(inputs, inputs, inputs, mask)
+
+    # self attention
+    context, attention = self.attention(inputs, inputs, inputs, padding_mask)
+
+    # feed forward network
     output = self.feed_forward(context)
+
     return output, attention
 
 
@@ -269,20 +272,19 @@ class Encoder(nn.Module):
                dropout=0.0):
     super(Encoder, self).__init__()
 
-    self.num_layers = num_layers
     self.encoder_layers = nn.ModuleList(
-      [EncoderLayer(model_dim, num_heads, ffn_dim, dropout) for _ in range(num_layers)])
+      [EncoderLayer(model_dim, num_heads, ffn_dim, dropout) for _ in
+       range(num_layers)])
 
     self.seq_embedding = nn.Embedding(vocab_size + 1, model_dim, padding_idx=0)
     self.pos_embedding = PositionalEncoding(model_dim, max_seq_len)
 
-  def forward(self, inputs, inputs_len, mask=None):
+  def forward(self, inputs, inputs_len):
     """Forward pass.
 
     Args:
       inputs: embedded inputs
       inputs_len: length of input sequence
-      mask: mask
 
     Returns:
       An output of encoder block.
@@ -290,11 +292,14 @@ class Encoder(nn.Module):
     """
     output = self.seq_embedding(inputs)
     output += self.pos_embedding(inputs_len)
+
+    self_attention_mask = padding_mask(inputs, inputs)
+
     attentions = []
-    for i in range(self.num_layers):
-      output, attention = self.encoder_layers[i](output, mask)
-      if attention:
-        attentions.append(attention)
+    for encoder in self.encoder_layers:
+      output, attention = encoder(output, self_attention_mask)
+      attentions.append(attention)
+
     return output, attentions
 
 
@@ -306,23 +311,33 @@ class DecoderLayer(nn.Module):
     self.attention = MultiHeadAttention(model_dim, num_heads, dropout)
     self.feed_forward = PositionalWiseFeedForward(model_dim, ffn_dim, dropout)
 
-  def forward(self, inputs, keys, values, seq_mask=None, padding_mask=None):
+  def forward(self,
+              dec_inputs,
+              enc_outputs,
+              self_attn_mask=None,
+              context_attn_mask=None):
     """Forward pass.
 
     Args:
-      inputs: Embedded input tensor
-      keys: Keys tensor from encoder, used for enc-dec attention
-      values: Values tensor form encoder, used for enc-dec attention
-      seq_mask: Sequence mask tensor, with shape of [B, L, L]
-      padding_mask: Padding mask tensor, with shape of [B, L_k, L_q]
+      dec_inputs: Embedded input tensor
+      enc_outputs: Encoder's output
+      self_attn_mask: Mask tensor, with shape of [B, L, L], pad_mask + seq_mask
+      context_attn_mask: Padding mask tensor, with shape of [B, L_q, L_k]
     """
-    context, self_attention = self.attention(inputs, inputs, inputs, mask)
 
-    context, enc_dec_attention = self.attention(keys, values, context, mask)
+    # self attention, all inputs are decoder inputs
+    dec_output, self_attention = self.attention(
+      dec_inputs, dec_inputs, dec_inputs, self_attn_mask)
 
-    output = self.feed_forward(context)
+    # context attention
+    # query is decoder's outputs, key and value are encoder's inputs
+    dec_output, context_attention = self.attention(
+      enc_outputs, enc_outputs, dec_output, context_attn_mask)
 
-    return output, self_attention, enc_dec_attention
+    # decoder's output, or context
+    dec_output = self.feed_forward(dec_output)
+
+    return dec_output, self_attention, context_attention
 
 
 class Decoder(nn.Module):
@@ -340,19 +355,33 @@ class Decoder(nn.Module):
     self.num_layers = num_layers
 
     self.decoder_layers = nn.ModuleList(
-      [DecoderLayer(model_dim, num_heads, ffn_dim, dropout) for _ in range(num_layers)])
+      [DecoderLayer(model_dim, num_heads, ffn_dim, dropout) for _ in
+       range(num_layers)])
 
     self.seq_embedding = nn.Embedding(vocab_size + 1, model_dim, padding_idx=0)
     self.pos_embedding = PositionalEncoding(model_dim, max_seq_len)
 
-  def forward(self, inputs, inputs_len, keys, values, mask=None):
+  def forward(self, inputs, inputs_len, enc_output, context_attn_mask=None):
+    """Forward pass.
+
+    Args:
+      inputs: Embedded inputs
+      inputs_len: Length tensor of inputs
+      enc_output: Encoder's output
+      context_attn_mask: Mask tensor for context attention
+    """
     output = self.seq_embedding(inputs)
     output += self.pos_embedding(inputs_len)
+
+    self_attention_padding_mask = padding_mask(inputs, inputs)
+    seq_mask = sequence_mask(inputs)
+    self_attn_mask = torch.gt((self_attention_padding_mask + seq_mask), 0)
 
     self_attentions = []
     context_attentions = []
     for decoder in self.decoder_layers:
-      output, self_attn, context_attn = decoder(output, keys, values, mask)
+      output, self_attn, context_attn = decoder(
+        output, enc_output, self_attn_mask, context_attn_mask)
       self_attentions.append(self_attn)
       context_attentions.append(context_attn)
 
@@ -369,7 +398,8 @@ def sequence_mask(seq):
     A masking tensor, with shape [B, L, L]
   """
   batch_size, seq_len = seq.size()
-  mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8), diagonal=1)
+  mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8),
+                    diagonal=1)
   mask = mask.unsqueeze(0).expand(batch_size, -1, -1)  # [B, L, L]
   return mask
 
@@ -405,18 +435,24 @@ class Transformer(nn.Module):
                dropout=0.0):
     super(Transformer, self).__init__()
 
-    self.encoder = Encoder(src_vocab_size, src_max_len, num_layers, model_dim, num_heads, ffn_dim, dropout)
-    self.decoder = Decoder(tgt_vocab_size, tgt_max_len, num_layers, model_dim, num_heads, ffn_dim, dropout)
+    self.encoder = Encoder(src_vocab_size, src_max_len, num_layers, model_dim,
+                           num_heads, ffn_dim, dropout)
+    self.decoder = Decoder(tgt_vocab_size, tgt_max_len, num_layers, model_dim,
+                           num_heads, ffn_dim, dropout)
 
     self.linear = nn.Linear(model_dim, tgt_vocab_size + 1, bias=False)
     self.softmax = nn.Softmax(dim=2)
 
   def forward(self, src_seq, src_len, tgt_seq, tgt_len):
-    # TODO(luozhouyang) create mask
-    mask = None
-    output, _ = self.encoder(src_seq, src_len, mask)
-    output, _, _ = self.decoder(tgt_seq, tgt_len, mask)
+
+    context_attn_mask = padding_mask(tgt_seq, src_seq)
+
+    output, enc_self_attn = self.encoder(src_seq, src_len)
+
+    output, dec_self_attn, ctx_attn = self.decoder(
+      tgt_seq, tgt_len, output, context_attn_mask)
 
     output = self.linear(output)
     output = self.softmax(output)
-    return output
+
+    return output, enc_self_attn, dec_self_attn, ctx_attn
