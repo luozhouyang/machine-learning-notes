@@ -27,21 +27,22 @@ class ScaledDotProductAttention(nn.Module):
     self.dropout = nn.Dropout(attention_dropout)
     self.softmax = nn.Softmax(dim=2)
 
-  def forward(self, q, k, v, mask=None):
+  def forward(self, q, k, v, padding_mask=None):
     """Forward pass.
 
     Args:
       q: Queries tensor, with shape of [B, L_q, D_q]
       k: Keys tensor, with shape of [B, L_k, D_k]
       v: Values tensor, with shape of [B, L_v, D_v]
-      mask: A ByteTensor, binary mask. If not None, do mask.
+      padding_mask: A binary masking tensor, with shape of [B, L_q, L_k]
     """
     attention = torch.bmm(q, k.transpose(1, 2))
     if self.scale:
       d_k = k.size(-1)  # get model's dimension or num_units
       attention = attention / np.sqrt(d_k)
-    if mask:
-      attention = attention.masked_fill_(mask, -np.inf)
+    if padding_mask:
+      # Mask out attention, set a big negative number to where were padded a `PAD`
+      attention = attention.masked_fill_(padding_mask, -np.inf)
     attention = self.softmax(attention)
     attention = self.dropout(attention)
     context = torch.bmm(attention, v)
@@ -147,15 +148,15 @@ class MultiHeadAttention(nn.Module):
     self.dropout = nn.Dropout(dropout)
     self.layer_norm = nn.LayerNorm(model_dim)
 
-  def forward(self, key, value, query, mask=None):
+  def forward(self, key, value, query, padding_mask=None, seq_mask=None):
     """Forward pass.
 
     Args:
       key: Key tensor, with shape of [B, L_k, D]
       value: Value tensor, with shape of [B, L_v, D]
       query: Query tensor, with shape of [B, L_q, D]
-      mask: Binary mask indicating which keys have non-zero attention,
-        with shape of [B, L_q, L_k]
+      padding_mask: Binary mask indicating which position is padding values, with shape of [B, L_q, L_k]
+      seq_mask: Binary mask indicating which keys has non-zero attention, with shape of [B, L, L]
     """
     residual = query
 
@@ -173,11 +174,13 @@ class MultiHeadAttention(nn.Module):
     value = value.view(batch_size * num_heads, -1, dim_per_head)
     query = query.view(batch_size * num_heads, -1, dim_per_head)
 
-    if mask:
+    # TODO(luozhouyang) decide where to do seq_mask
+
+    if padding_mask:
       # TODO(luozhouyang): check the shape of mask
-      mask = mask.repeat(num_heads, 1, 1)
+      padding_mask = padding_mask.repeat(num_heads, 1, 1)
     # scaled dot product attention
-    context, attention = self.dot_product_attention(query, key, value, mask)
+    context, attention = self.dot_product_attention(query, key, value, padding_mask)
 
     # concat heads
     context = context.view(batch_size, -1, dim_per_head * num_heads)
@@ -230,7 +233,6 @@ class PositionalWiseFeedForward(nn.Module):
     return output
 
 
-# TODO(luozhouyang) Process embeddings in encoder and decoder
 class EncoderLayer(nn.Module):
   """A encoder block, with tow sub layers."""
 
@@ -304,14 +306,15 @@ class DecoderLayer(nn.Module):
     self.attention = MultiHeadAttention(model_dim, num_heads, dropout)
     self.feed_forward = PositionalWiseFeedForward(model_dim, ffn_dim, dropout)
 
-  def forward(self, inputs, keys, values, mask=None):
+  def forward(self, inputs, keys, values, seq_mask=None, padding_mask=None):
     """Forward pass.
 
     Args:
       inputs: Embedded input tensor
       keys: Keys tensor from encoder, used for enc-dec attention
       values: Values tensor form encoder, used for enc-dec attention
-      mask: Mask
+      seq_mask: Sequence mask tensor, with shape of [B, L, L]
+      padding_mask: Padding mask tensor, with shape of [B, L_k, L_q]
     """
     context, self_attention = self.attention(inputs, inputs, inputs, mask)
 
@@ -354,6 +357,38 @@ class Decoder(nn.Module):
       context_attentions.append(context_attn)
 
     return output, self_attentions, context_attentions
+
+
+def sequence_mask(seq):
+  """Sequence mask to masking out sub-sequence info.
+
+  Args:
+    seq: Sequence tensor, with shape [B, L]
+
+  Returns:
+    A masking tensor, with shape [B, L, L]
+  """
+  batch_size, seq_len = seq.size()
+  mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8), diagonal=1)
+  mask = mask.unsqueeze(0).expand(batch_size, -1, -1)  # [B, L, L]
+  return mask
+
+
+def padding_mask(seq_k, seq_q):
+  """For masking out the padding part of the keys sequence.
+
+  Args:
+    seq_k: Keys tensor, with shape [B, L_k]
+    seq_q: Query tensor, with shape [B, L_q]
+
+  Returns:
+    A masking tensor, with shape [B, L_1, L_k]
+  """
+  len_q = seq_q.size(1)
+  # `PAD` is 0
+  pad_mask = seq_k.eq(0)
+  pad_mask = pad_mask.unsqueeze(1).expand(-1, len_q, -1)  # shape [B, L_q, L_k]
+  return pad_mask
 
 
 class Transformer(nn.Module):
