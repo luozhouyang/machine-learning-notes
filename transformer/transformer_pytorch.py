@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.functional as F
+import torch.nn as nn
 
 
 class ScaledDotProductAttention(nn.Module):
@@ -257,6 +258,8 @@ class EncoderLayer(nn.Module):
 class Encoder(nn.Module):
 
   def __init__(self,
+               vocab_size,
+               max_seq_len,
                num_layers=6,
                model_dim=512,
                num_heads=8,
@@ -265,24 +268,120 @@ class Encoder(nn.Module):
     super(Encoder, self).__init__()
 
     self.num_layers = num_layers
-    self.encoder_layers = [EncoderLayer(model_dim, num_heads, ffn_dim, dropout)
-                           for _ in range(num_layers)]
+    self.encoder_layers = nn.ModuleList(
+      [EncoderLayer(model_dim, num_heads, ffn_dim, dropout) for _ in range(num_layers)])
 
-  def forward(self, inputs, mask=None):
+    self.seq_embedding = nn.Embedding(vocab_size + 1, model_dim, padding_idx=0)
+    self.pos_embedding = PositionalEncoding(model_dim, max_seq_len)
+
+  def forward(self, inputs, inputs_len, mask=None):
     """Forward pass.
 
     Args:
       inputs: embedded inputs
+      inputs_len: length of input sequence
       mask: mask
 
     Returns:
       An output of encoder block.
       An attention list contains each attention tensor of each encoder layer.
     """
-    output = inputs
+    output = self.seq_embedding(inputs)
+    output += self.pos_embedding(inputs_len)
     attentions = []
     for i in range(self.num_layers):
       output, attention = self.encoder_layers[i](output, mask)
       if attention:
         attentions.append(attention)
     return output, attentions
+
+
+class DecoderLayer(nn.Module):
+
+  def __init__(self, model_dim, num_heads=8, ffn_dim=2048, dropout=0.0):
+    super(DecoderLayer, self).__init__()
+
+    self.attention = MultiHeadAttention(model_dim, num_heads, dropout)
+    self.feed_forward = PositionalWiseFeedForward(model_dim, ffn_dim, dropout)
+
+  def forward(self, inputs, keys, values, mask=None):
+    """Forward pass.
+
+    Args:
+      inputs: Embedded input tensor
+      keys: Keys tensor from encoder, used for enc-dec attention
+      values: Values tensor form encoder, used for enc-dec attention
+      mask: Mask
+    """
+    context, self_attention = self.attention(inputs, inputs, inputs, mask)
+
+    context, enc_dec_attention = self.attention(keys, values, context, mask)
+
+    output = self.feed_forward(context)
+
+    return output, self_attention, enc_dec_attention
+
+
+class Decoder(nn.Module):
+
+  def __init__(self,
+               vocab_size,
+               max_seq_len,
+               num_layers=6,
+               model_dim=512,
+               num_heads=8,
+               ffn_dim=2048,
+               dropout=0.0):
+    super(Decoder, self).__init__()
+
+    self.num_layers = num_layers
+
+    self.decoder_layers = nn.ModuleList(
+      [DecoderLayer(model_dim, num_heads, ffn_dim, dropout) for _ in range(num_layers)])
+
+    self.seq_embedding = nn.Embedding(vocab_size + 1, model_dim, padding_idx=0)
+    self.pos_embedding = PositionalEncoding(model_dim, max_seq_len)
+
+  def forward(self, inputs, inputs_len, keys, values, mask=None):
+    output = self.seq_embedding(inputs)
+    output += self.pos_embedding(inputs_len)
+
+    self_attentions = []
+    context_attentions = []
+    for decoder in self.decoder_layers:
+      output, self_attn, context_attn = decoder(output, keys, values, mask)
+      self_attentions.append(self_attn)
+      context_attentions.append(context_attn)
+
+    return output, self_attentions, context_attentions
+
+
+class Transformer(nn.Module):
+
+  def __init__(self,
+               src_vocab_size,
+               src_max_len,
+               tgt_vocab_size,
+               tgt_max_len,
+               num_layers=6,
+               model_dim=512,
+               num_heads=8,
+               ffn_dim=2048,
+               dropout=0.0):
+    super(Transformer, self).__init__()
+
+    self.encoder = Encoder(src_vocab_size, src_max_len, num_layers, model_dim, num_heads, ffn_dim, dropout)
+    self.decoder = Decoder(tgt_vocab_size, tgt_max_len, num_layers, model_dim, num_heads, ffn_dim, dropout)
+
+    self.linear = nn.Linear(model_dim, tgt_vocab_size + 1, bias=False)
+    self.softmax = nn.Softmax(dim=2)
+
+  def forward(self, src_seq, src_len, tgt_seq, tgt_len):
+    # TODO(luozhouyang) create mask
+    mask = None
+    output, _ = self.encoder(src_seq, src_len, mask)
+    output, _, _ = self.decoder(tgt_seq, tgt_len, mask)
+
+    output = self.linear(output)
+    output = self.softmax(output)
+    return output
