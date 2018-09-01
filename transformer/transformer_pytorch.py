@@ -21,29 +21,28 @@ import torch.nn as nn
 
 class ScaledDotProductAttention(nn.Module):
 
-  def __init__(self, attention_dropout=0.0, scale=True):
+  def __init__(self, attention_dropout=0.0):
     super(ScaledDotProductAttention, self).__init__()
-    self.scale = scale
     self.dropout = nn.Dropout(attention_dropout)
     self.softmax = nn.Softmax(dim=2)
 
-  def forward(self, q, k, v, padding_mask=None):
+  def forward(self, q, k, v, scale=None, attn_mask=None):
     """Forward pass.
 
     Args:
       q: Queries tensor, with shape of [B, L_q, D_q]
       k: Keys tensor, with shape of [B, L_k, D_k]
       v: Values tensor, with shape of [B, L_v, D_v]
-      padding_mask: A binary masking tensor, with shape of [B, L_q, L_k]
+      scale: A scalar, scale factor.
+      attn_mask: A binary masking tensor, with shape of [B, L_q, L_k]
     """
     attention = torch.bmm(q, k.transpose(1, 2))
-    if self.scale:
-      d_k = k.size(-1)  # get model's dimension or num_units
-      attention = attention / np.sqrt(d_k)
-    if padding_mask:
+    if scale:
+      attention = attention * scale
+    if attn_mask:
       # Mask out attention
       # set a big negative number to where were padded a `PAD`
-      attention = attention.masked_fill_(padding_mask, -np.inf)
+      attention = attention.masked_fill_(attn_mask, -np.inf)
     attention = self.softmax(attention)
     attention = self.dropout(attention)
     context = torch.bmm(attention, v)
@@ -144,7 +143,7 @@ class MultiHeadAttention(nn.Module):
     self.linear_v = nn.Linear(model_dim, self.dim_per_head * num_heads)
     self.linear_q = nn.Linear(model_dim, self.dim_per_head * num_heads)
 
-    self.dot_product_attention = ScaledDotProductAttention(dropout, scale=True)
+    self.dot_product_attention = ScaledDotProductAttention(dropout)
     self.linear_final = nn.Linear(model_dim, model_dim)
     self.dropout = nn.Dropout(dropout)
     self.layer_norm = nn.LayerNorm(model_dim)
@@ -177,8 +176,9 @@ class MultiHeadAttention(nn.Module):
     if attn_mask:
       attn_mask = attn_mask.repeat(num_heads, 1, 1)
     # scaled dot product attention
+    scale = (key.size(-1) // num_heads) ** -0.5
     context, attention = self.dot_product_attention(
-      query, key, value, attn_mask)
+      query, key, value, scale, attn_mask)
 
     # concat heads
     context = context.view(batch_size, -1, dim_per_head * num_heads)
@@ -444,7 +444,6 @@ class Transformer(nn.Module):
     self.softmax = nn.Softmax(dim=2)
 
   def forward(self, src_seq, src_len, tgt_seq, tgt_len):
-
     context_attn_mask = padding_mask(tgt_seq, src_seq)
 
     output, enc_self_attn = self.encoder(src_seq, src_len)
