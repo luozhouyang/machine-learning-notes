@@ -20,8 +20,14 @@ import torch.nn as nn
 
 
 class ScaledDotProductAttention(nn.Module):
+  """Scaled dot-product attention mechanism."""
 
   def __init__(self, attention_dropout=0.0):
+    """Init.
+
+    Args:
+      attention_dropout: A scalar, dropout rate.
+    """
     super(ScaledDotProductAttention, self).__init__()
     self.dropout = nn.Dropout(attention_dropout)
     self.softmax = nn.Softmax(dim=2)
@@ -35,13 +41,16 @@ class ScaledDotProductAttention(nn.Module):
       v: Values tensor, with shape of [B, L_v, D_v]
       scale: A scalar, scale factor.
       attn_mask: A binary masking tensor, with shape of [B, L_q, L_k]
+
+    Returns:
+      Context and attention tensor.
     """
     attention = torch.bmm(q, k.transpose(1, 2))
     if scale:
       attention = attention * scale
     if attn_mask:
       # Mask out attention
-      # set a big negative number to where were padded a `PAD`
+      # set a negative infnite to where were padded a `PAD`
       attention = attention.masked_fill_(attn_mask, -np.inf)
     attention = self.softmax(attention)
     attention = self.dropout(attention)
@@ -50,21 +59,20 @@ class ScaledDotProductAttention(nn.Module):
 
 
 class LayerNorm(nn.Module):
-  """Layer Normalization. Pytorch has already implemented this `nn.LayerNorm`"""
+  """Layer Normalization. PyTorch has already implemented this `nn.LayerNorm`"""
 
-  def __init__(self, features, epsilon=1e-6):
+  def __init__(self, model_dim, epsilon=1e-6):
     """Init.
 
     Args:
-      features: Number of features,
-        or the last dim of input x with shape of [B, L, D]
+      model_dim: Number of features, or model's dimension.
       epsilon: A small number to avoid numeric error.
     """
     super(LayerNorm, self).__init__()
     # weights
-    self.gamma = nn.Parameter(torch.ones(features))
+    self.gamma = nn.Parameter(torch.ones(model_dim))
     # bias
-    self.beta = nn.Parameter(torch.zeros(features))
+    self.beta = nn.Parameter(torch.zeros(model_dim))
     self.epsilon = epsilon
 
   def forward(self, x):
@@ -72,6 +80,9 @@ class LayerNorm(nn.Module):
 
     Args:
       x: Input tensor, with shape of [B, L, D]
+
+    Returns:
+      Normalized input tensor.
     """
     mean = x.mean(-1, keepdim=True)
     std = x.std(-1, keepdim=True)
@@ -79,28 +90,32 @@ class LayerNorm(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
+  """Positional encoding.
+  This class is modified from https://github.com/JayParks/transformer/blob/master/transformer/modules.py.
+  """
 
-  def __init__(self, d_model, max_seq_len):
+  def __init__(self, model_dim, max_seq_len):
     """Init.
 
     Args:
-      d_model: The model's dimension,
+      model_dim: The model's dimension,
         the last dimension of input x with shape of [B, L, D]
       max_seq_len: The maximum sequence length, or the time-steps,
         the second dimension of input x with shape of [B, L, D]
     """
     super(PositionalEncoding, self).__init__()
 
+    # j//2 because we have sin and cos tow channels
     position_encoding = np.array([
-      [pos / np.pow(10000, 2.0 * (j // 2) / d_model) for j in range(d_model)]
+      [pos / np.pow(10000, 2.0 * (j // 2) / model_dim) for j in range(model_dim)]
       for pos in range(max_seq_len)])
     position_encoding[:, 0::2] = np.sin(position_encoding[:, 0::2])
     position_encoding[:, 1::2] = np.cos(position_encoding[:, 1::2])
 
-    pad_row = torch.zeros([1, d_model])
+    pad_row = torch.zeros([1, model_dim])
     position_encoding = torch.cat((pad_row, position_encoding))
     # additional PAD position index
-    self.position_encoding = nn.Embedding(max_seq_len + 1, d_model)
+    self.position_encoding = nn.Embedding(max_seq_len + 1, model_dim)
 
     self.position_encoding.weight = nn.Parameter(position_encoding,
                                                  requires_grad=False)
@@ -125,7 +140,7 @@ class PositionalEncoding(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-  """Multi-Head attention as described in paper <Attention Is All You Need>."""
+  """Multi-Head attention."""
 
   def __init__(self, model_dim=512, num_heads=8, dropout=0.0):
     """Init.
@@ -432,7 +447,7 @@ class Transformer(nn.Module):
                model_dim=512,
                num_heads=8,
                ffn_dim=2048,
-               dropout=0.0):
+               dropout=0.2):
     super(Transformer, self).__init__()
 
     self.encoder = Encoder(src_vocab_size, src_max_len, num_layers, model_dim,
@@ -440,7 +455,7 @@ class Transformer(nn.Module):
     self.decoder = Decoder(tgt_vocab_size, tgt_max_len, num_layers, model_dim,
                            num_heads, ffn_dim, dropout)
 
-    self.linear = nn.Linear(model_dim, tgt_vocab_size + 1, bias=False)
+    self.linear = nn.Linear(model_dim, tgt_vocab_size, bias=False)
     self.softmax = nn.Softmax(dim=2)
 
   def forward(self, src_seq, src_len, tgt_seq, tgt_len):
