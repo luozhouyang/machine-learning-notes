@@ -1,6 +1,8 @@
 # machine-learning-notes
 A repository to save my machine learning notes.
 
+> 本仓库可能不会持续更新
+
 * [反向传播(back-propagation)](backpropagation.ipynb)
 * [神经网络(neural networks)](neural_networks.ipynb)
 * [Softmax分类器](softmax_classifier.ipynb)
