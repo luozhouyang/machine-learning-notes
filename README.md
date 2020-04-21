@@ -12,3 +12,25 @@ A repository to save my machine learning notes.
 * [Transformer模型笔记](transformer.ipynb)
 * [Transformer的PyTorch实现](transformer_pytorch.ipynb)
 * [面试准备](interview.ipynb)
+
+
+## nlp相关
+
+
+* [切词](nlp/segmentation.ipynb)
+* [embeddings](nlp/embeddings.ipynb)
+* [attention](nlp/attention.ipynb)
+* [seq2seq](nlp/seq2seq.ipynb)
+* [transformer](nlp/transformer.ipynb)
+* [bert](nlp/bert.ipynb)
+* [bert-based](nlp/bert_based.ipynb)
+* [tensorrt](nlp/tensorrt.ipynb)
+* [ner](nlp/ner.ipynb)
+* [keywords extraction](nlp/keywords_extraction.ipynb)
+* [matching](nlp/matching.ipynb)
+
+
+## 推荐
+
+* [FM]()
+* [DeepFM]()
