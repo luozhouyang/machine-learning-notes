@@ -18,7 +18,7 @@ A repository to save my machine learning notes.
 
 
 * [切词](nlp/segmentation.ipynb)
-* [embeddings](nlp/embeddings.ipynb)
+* [embeddings](nlp/embeddings.md)
 * [attention](nlp/attention.ipynb)
 * [seq2seq](nlp/seq2seq.ipynb)
 * [transformer](nlp/transformer.ipynb)
