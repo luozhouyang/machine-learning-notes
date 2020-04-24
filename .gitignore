@@ -2,7 +2,9 @@ pdfs/
 venv/
 .idea/
 .vscode/
-
+log
+models
+.DS_Store
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
